@@ -22,6 +22,7 @@
 #include "../common/common.h"
 #include "../interop/interop.h"
 #include "./welcome_gui.h"
+#include <wchar.h>
 
 #include <memory>
 #include <unordered_map>
@@ -40,6 +41,10 @@ class DerivedWelcomeFrame : public WelcomeFrame {
   protected:
     void on_dont_show_change(wxCommandEvent &event);
     void on_complete(wxCommandEvent &event);
+
+    // React to WM_SETTINGCHANGE to re-theme live (wx 3.1.5 lacks dark-mode events).
+    WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam);
+    void ApplyTheme();
 
   public:
     DerivedWelcomeFrame(wxWindow *parent);
@@ -67,6 +72,34 @@ DerivedWelcomeFrame::DerivedWelcomeFrame(wxWindow *parent)
     if (welcome_metadata->already_running) {
         this->title_label->SetLabel("Espanso is already running!");
     }
+
+#ifdef __WXMSW__
+    // Apply dark mode up-front; live changes handled in MSWWindowProc.
+    applyDarkModeToWindow(GetHandle(), isSystemDark());
+    applyThemeColors(this, isSystemDark());
+#endif
+}
+
+void DerivedWelcomeFrame::ApplyTheme() {
+#ifdef __WXMSW__
+    bool dark = isSystemDark();
+    applyDarkModeToWindow(GetHandle(), dark);
+    applyThemeColors(this, dark);
+    this->Refresh();
+#endif
+}
+
+WXLRESULT DerivedWelcomeFrame::MSWWindowProc(WXUINT message, WXWPARAM wParam,
+                                             WXLPARAM lParam) {
+#ifdef __WXMSW__
+    // Windows broadcasts WM_SETTINGCHANGE ("ImmersiveColorSet") on theme
+    // changes, including PowerToys Light Switch scheduled switches.
+    if (message == WM_SETTINGCHANGE && lParam != 0 &&
+        wcscmp((LPCWSTR)lParam, L"ImmersiveColorSet") == 0) {
+        ApplyTheme();
+    }
+#endif
+    return WelcomeFrame::MSWWindowProc(message, wParam, lParam);
 }
 
 void DerivedWelcomeFrame::on_dont_show_change(wxCommandEvent &event) {
@@ -79,6 +112,10 @@ void DerivedWelcomeFrame::on_dont_show_change(wxCommandEvent &event) {
 void DerivedWelcomeFrame::on_complete(wxCommandEvent &event) { Close(true); }
 
 bool WelcomeApp::OnInit() {
+#ifdef __WXMSW__
+    // Opt into Windows immersive dark mode before any window is created.
+    enableAppDarkMode();
+#endif
     wxInitAllImageHandlers();
     DerivedWelcomeFrame *frame = new DerivedWelcomeFrame(NULL);
 

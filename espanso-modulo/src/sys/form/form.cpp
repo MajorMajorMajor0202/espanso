@@ -21,6 +21,7 @@
 
 #include "../common/common.h"
 #include "../interop/interop.h"
+#include <wchar.h>
 
 #include <memory>
 #include <unordered_map>
@@ -109,10 +110,18 @@ class FormFrame : public wxFrame {
     void UpdateHelpText();
     void HandleNormalFocus(wxFocusEvent &event);
     void HandleMultilineFocus(wxFocusEvent &event);
+
+    // React to WM_SETTINGCHANGE to re-theme live (wx 3.1.5 lacks dark-mode events).
+    WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam);
+    void ApplyTheme();
 };
 enum { ID_Submit = 20000 };
 
 bool FormApp::OnInit() {
+#ifdef __WXMSW__
+    // Opt into Windows immersive dark mode before any window is created.
+    enableAppDarkMode();
+#endif
     const wxSize &maxFormSize =
         wxSize(formMetadata->maxWindowWidth, formMetadata->maxWindowHeight);
     FormFrame *frame =
@@ -156,6 +165,34 @@ FormFrame::FormFrame(const wxString &title, const wxPoint &pos,
 
     this->SetClientSize(panel->GetBestSize());
     this->CentreOnScreen();
+
+#ifdef __WXMSW__
+    // Apply dark mode up-front; live changes handled in MSWWindowProc.
+    applyDarkModeToWindow(GetHandle(), isSystemDark());
+    applyThemeColors(this, isSystemDark());
+#endif
+}
+
+void FormFrame::ApplyTheme() {
+#ifdef __WXMSW__
+    bool dark = isSystemDark();
+    applyDarkModeToWindow(GetHandle(), dark);
+    applyThemeColors(this, dark);
+    this->Refresh();
+#endif
+}
+
+WXLRESULT FormFrame::MSWWindowProc(WXUINT message, WXWPARAM wParam,
+                                   WXLPARAM lParam) {
+#ifdef __WXMSW__
+    // Windows broadcasts WM_SETTINGCHANGE ("ImmersiveColorSet") on theme
+    // changes, including PowerToys Light Switch scheduled switches.
+    if (message == WM_SETTINGCHANGE && lParam != 0 &&
+        wcscmp((LPCWSTR)lParam, L"ImmersiveColorSet") == 0) {
+        ApplyTheme();
+    }
+#endif
+    return wxFrame::MSWWindowProc(message, wParam, lParam);
 }
 
 void FormFrame::AddComponent(wxPanel *parent, wxBoxSizer *sizer,
